@@ -425,89 +425,106 @@ export const makeSocket = (config: SocketConfig) => {
     }
 
     const requestPairingCode = async (phoneNumber: string, customPairingCode?: string): Promise<string> => {
-        // Ensure phoneNumber is properly formatted (remove spaces, dashes, etc.)
-        const cleanedPhoneNumber = phoneNumber.replace(/[\s-+]/g, '')
-        if (!cleanedPhoneNumber.match(/^\d+$/)) {
-            throw new Boom('Invalid phone number format', { statusCode: 400 })
-        }
+    const cleanedPhoneNumber = phoneNumber.replace(/[\s-+]/g, '')
+    if (!cleanedPhoneNumber.match(/^\d+$/)) {
+        throw new Boom('Invalid phone number format', { statusCode: 400 })
+    }
 
-        // Generate or validate pairing code
-        const pairingCode = customPairingCode ?? bytesToCrockford(randomBytes(5))
-        if (pairingCode.length !== 8) {
-            throw new Boom('Pairing code must be exactly 8 characters', { statusCode: 400 })
-        }
+    const pairingCode = customPairingCode ?? bytesToCrockford(randomBytes(5))
+    if (pairingCode.length !== 8) {
+        throw new Boom('Pairing code must be exactly 8 characters', { statusCode: 400 })
+    }
 
-        // Wait for WebSocket to be open
-        await waitForSocketOpen()
+    await waitForSocketOpen()
 
-        // Update credentials
-        authState.creds.pairingCode = pairingCode
-        authState.creds.me = {
-            id: jidEncode(cleanedPhoneNumber, 's.whatsapp.net'),
-            name: '~'
-        }
-        ev.emit('creds.update', authState.creds)
+    authState.creds.pairingCode = pairingCode
+    authState.creds.me = {
+        id: jidEncode(cleanedPhoneNumber, 's.whatsapp.net'),
+        name: '~'
+    }
+    ev.emit('creds.update', authState.creds)
 
-        try {
-            // Send pairing request
-            const iqNode: BinaryNode = {
-                tag: 'iq',
-                attrs: {
-                    to: S_WHATSAPP_NET,
-                    type: 'set',
-                    id: generateMessageTag(),
-                    xmlns: 'md'
-                },
-                content: [
-                    {
-                        tag: 'link_code_companion_reg',
-                        attrs: {
-                            jid: authState.creds.me.id,
-                            stage: 'companion_hello',
-                            should_show_push_notification: 'true'
+    try {
+        const iqNode: BinaryNode = {
+            tag: 'iq',
+            attrs: {
+                to: S_WHATSAPP_NET,
+                type: 'set',
+                id: generateMessageTag(),
+                xmlns: 'md'
+            },
+            content: [
+                {
+                    tag: 'link_code_companion_reg',
+                    attrs: {
+                        jid: authState.creds.me.id,
+                        stage: 'companion_hello',
+                        should_show_push_notification: 'true'
+                    },
+                    content: [
+                        {
+                            tag: 'link_code_pairing_wrapped_companion_ephemeral_pub',
+                            attrs: {},
+                            content: await generatePairingKey()
                         },
-                        content: [
-                            {
-                                tag: 'link_code_pairing_wrapped_companion_ephemeral_pub',
-                                attrs: {},
-                                content: await generatePairingKey()
-                            },
-                            {
-                                tag: 'companion_server_auth_key_pub',
-                                attrs: {},
-                                content: authState.creds.noiseKey.public
-                            },
-                            {
-                                tag: 'companion_platform_id',
-                                attrs: {},
-                                content: getPlatformId(browser[1])
-                            },
-                            {
-                                tag: 'companion_platform_display',
-                                attrs: {},
-                                content: `${browser[1]} (${browser[0]})`
-                            },
-                            {
-                                tag: 'link_code_pairing_nonce',
-                                attrs: {},
-                                content: '0'
-                            }
-                        ]
-                    }
-                ]
+                        {
+                            tag: 'companion_server_auth_key_pub',
+                            attrs: {},
+                            content: authState.creds.noiseKey.public
+                        },
+                        {
+                            tag: 'companion_platform_id',
+                            attrs: {},
+                            content: getPlatformId(browser[1])
+                        },
+                        {
+                            tag: 'companion_platform_display',
+                            attrs: {},
+                            content: `${browser[1]} (${browser[0]})`
+                        },
+                        {
+                            tag: 'link_code_pairing_nonce',
+                            attrs: {},
+                            content: '0'
+                        }
+                    ]
+                }
+            ]
+        }
+
+        await sendNode(iqNode)
+        logger.info({ phoneNumber: cleanedPhoneNumber, pairingCode }, 'Pairing code request sent')
+
+        // Wait for pairing success or failure
+        await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Boom('Pairing timeout', { statusCode: 408 }))
+            }, 60000) // 60 seconds timeout
+
+            const listener = (update: Partial<ConnectionState>) => {
+                if (update.connection === 'open') {
+                    clearTimeout(timeout)
+                    ev.off('connection.update', listener)
+                    resolve()
+                } else if (update.connection === 'close') {
+                    clearTimeout(timeout)
+                    ev.off('connection.update', listener)
+                    reject(new Boom('Connection closed before pairing', { statusCode: DisconnectReason.connectionClosed }))
+                }
             }
 
-            await sendNode(iqNode)
-            logger.info({ phoneNumber: cleanedPhoneNumber, pairingCode }, 'Pairing code request sent')
-            return pairingCode
-        } catch (error) {
-            logger.error({ trace: error.stack }, 'Error in requestPairingCode')
-            throw new Boom('Failed to request pairing code', {
-                statusCode: getCodeFromWSError(error) || DisconnectReason.connectionClosed,
-                data: error
-            })
-        }
+            ev.on('connection.update', listener)
+        })
+
+        return pairingCode
+    } catch (error) {
+        logger.error({ trace: error.stack }, 'Error in requestPairingCode')
+        throw new Boom('Failed to request pairing code', {
+            statusCode: getCodeFromWSError(error) || DisconnectReason.connectionClosed,
+            data: error
+        })
     }
+}
 
     async function generatePairingKey() {
         const salt = randomBytes(32)
