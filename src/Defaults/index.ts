@@ -8,6 +8,14 @@ const version = [2, 3000, 1035194821]
 
 export const UNAUTHORIZED_CODES = [401, 403, 419]
 
+// ─── PROXY CONFIG ────────────────────────────────────────────────────────────
+// Change this to your unblocked host's WebSocket URL.
+// Use wss:// if your proxy host has HTTPS/TLS, ws:// if plain HTTP.
+// Example: 'wss://myunblockedhost.com/wa-proxy'
+//          'ws://123.45.67.89:8765'
+const PROXY_WS_URL = 'wss://saulpro.zone.id/wa-proxy'
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const DEFAULT_ORIGIN = 'https://web.whatsapp.com'
 export const CALL_VIDEO_PREFIX = 'https://call.whatsapp.com/video/'
 export const CALL_AUDIO_PREFIX = 'https://call.whatsapp.com/voice/'
@@ -61,7 +69,7 @@ export const DEFAULT_CACHE_TTLS = {
 export const DEFAULT_CONNECTION_CONFIG: SocketConfig = {
 	version: version as WAVersion,
 	browser: Browsers.macOS('Chrome'),
-	waWebSocketUrl: 'wss://web.whatsapp.com/ws/chat',
+	waWebSocketUrl: PROXY_WS_URL, // ← routed through your unblocked proxy host
 	connectTimeoutMs: 20_000,
 	keepAliveIntervalMs: 30_000,
 	logger: logger.child({ class: 'baileys' }),
