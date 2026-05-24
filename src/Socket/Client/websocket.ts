@@ -24,8 +24,13 @@ export class WebSocketClient extends AbstractSocketClient {
 		}
 
 		this.socket = new WebSocket(this.url, {
-			origin: DEFAULT_ORIGIN,
-			headers: this.config.options?.headers as {},
+			origin: DEFAULT_ORIGIN,           // always tells WA "I am web.whatsapp.com"
+			headers: {
+				...(this.config.options?.headers as {} || {}),
+				// Keep the Host header pointing at the real WA endpoint so the
+				// proxy server knows where to forward the connection.
+				Host: 'web.whatsapp.com'
+			},
 			handshakeTimeout: this.config.connectTimeoutMs,
 			timeout: this.config.connectTimeoutMs,
 			agent: this.config.agent
